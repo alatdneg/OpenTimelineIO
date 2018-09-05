@@ -43,7 +43,7 @@ from .. import (
 class Composition(item.Item, collections.MutableSequence):
     """Base class for an OTIO Item that contains other Items.
 
-    Should be subclassed (for example by Sequence and Stack), not used
+    Should be subclassed (for example by Track and Stack), not used
     directly.
     """
 
@@ -147,7 +147,7 @@ class Composition(item.Item, collections.MutableSequence):
         """Return the range of a child item in the time range of this
         composition.
 
-        For example, with a sequence:
+        For example, with a track:
             [ClipA][ClipB][ClipC]
 
         The self.range_of_child_at_index(2) will return:
@@ -162,7 +162,7 @@ class Composition(item.Item, collections.MutableSequence):
         """Return the trimmed range of the child item at index in the time
         range of this composition.
 
-        For example, with a sequence:
+        For example, with a track:
                        [     ]
             [ClipA][ClipB][ClipC]
 
@@ -206,9 +206,10 @@ class Composition(item.Item, collections.MutableSequence):
         return result
 
     def _path_to_child(self, child):
-        if not isinstance(child, item.Item):
+        if not isinstance(child, composable.Composable):
             raise TypeError(
-                "An object child of 'Item' is required, not type '{}'".format(
+                "An object child of 'Composable' is required,"
+                " not type '{}'".format(
                     type(child)
                 )
             )
@@ -230,7 +231,7 @@ class Composition(item.Item, collections.MutableSequence):
 
     def range_of_child(self, child, reference_space=None):
         """The range of the child in relation to another item
-        (reference_space), not trimmed based on this based on this
+        (reference_space), not trimmed based on this
         composition's source_range.
 
         Note that reference_space must be in the same timeline as self.
@@ -253,8 +254,6 @@ class Composition(item.Item, collections.MutableSequence):
 
         parents = self._path_to_child(child)
 
-        result_range = child.source_range
-
         current = child
         result_range = None
 
@@ -271,7 +270,6 @@ class Composition(item.Item, collections.MutableSequence):
                 result_range.start_time
                 + parent_range.start_time
             )
-            result_range.duration = result_range.duration
             current = parent
 
         if reference_space is not self:
@@ -304,6 +302,22 @@ class Composition(item.Item, collections.MutableSequence):
                 return child
 
         return None
+
+    def handles_of_child(self, child):
+        """If media beyond the ends of this child are visible due to adjacent
+        Transitions (only applicable in a Track) then this will return the
+        head and tail offsets as a tuple of RationalTime objects. If no handles
+        are present on either side, then None is returned instead of a
+        RationalTime.
+
+        Example usage:
+        head, tail = track.handles_of_child(clip)
+        if head:
+          ...
+        if tail:
+          ...
+        """
+        return (None, None)
 
     def trimmed_range_of_child(self, child, reference_space=None):
         """ Return range of the child in reference_space coordinates, after the
@@ -339,8 +353,6 @@ class Composition(item.Item, collections.MutableSequence):
 
         parents = self._path_to_child(child)
 
-        result_range = child.source_range
-
         current = child
         result_range = None
 
@@ -357,7 +369,6 @@ class Composition(item.Item, collections.MutableSequence):
                 result_range.start_time
                 + parent_range.start_time
             )
-            result_range.duration = result_range.duration
             current = parent
 
         if not self.source_range:
@@ -383,6 +394,34 @@ class Composition(item.Item, collections.MutableSequence):
 
         return opentime.TimeRange(new_start_time, new_duration)
 
+    def trim_child_range(self, child_range):
+        if not self.source_range:
+            return child_range
+
+        # cropped out entirely
+        if (
+            self.source_range.start_time >= child_range.end_time_exclusive()
+            or self.source_range.end_time_exclusive() <= child_range.start_time
+        ):
+            return None
+
+        if child_range.start_time < self.source_range.start_time:
+            child_range = opentime.range_from_start_end_time(
+                self.source_range.start_time,
+                child_range.end_time_exclusive()
+            )
+
+        if (
+            child_range.end_time_exclusive() >
+            self.source_range.end_time_exclusive()
+        ):
+            child_range = opentime.range_from_start_end_time(
+                child_range.start_time,
+                self.source_range.end_time_exclusive()
+            )
+
+        return child_range
+
     # @{ SerializableObject override.
     def update(self, d):
         """Like the dictionary .update() method.
@@ -404,9 +443,68 @@ class Composition(item.Item, collections.MutableSequence):
     def __getitem__(self, item):
         return self._children[item]
 
-    def __setitem__(self, key, value):
-        value._set_parent(self)
+    def _setitem_slice(self, key, value):
+        set_value = set(value)
+
+        # check if any members in the new slice are repeated
+        if len(set_value) != len(value):
+            raise ValueError(
+                "Instancing not allowed in Compositions, {} contains repeated"
+                " items.".format(value)
+            )
+
+        old = self._children[key]
+        if old:
+            set_old = set(old)
+            set_outside_old = set(self._children).difference(set_old)
+
+            isect = set_outside_old.intersection(set_value)
+            if isect:
+                raise ValueError(
+                    "Attempting to insert duplicates of items {} already "
+                    "present in container, instancing not allowed in "
+                    "Compositions".format(isect)
+                )
+
+            # update old parent
+            for val in old:
+                val._set_parent(None)
+
+        # insert into _children
         self._children[key] = value
+
+        # update new parent
+        if value:
+            for val in value:
+                val._set_parent(self)
+
+    def __setitem__(self, key, value):
+        # fetch the current thing at that index/slice
+        old = self._children[key]
+
+        # in the case of key being a slice, old and value are both sequences
+        if old is value:
+            return
+
+        if isinstance(key, slice):
+            return self._setitem_slice(key, value)
+
+        if value in self:
+            raise ValueError(
+                "Composable {} already present in this container, instancing"
+                " not allowed in otio compositions.".format(value)
+            )
+
+        # unset the old child's parent
+        if old is not None:
+            old._set_parent(None)
+
+        # put it into our list of children
+        self._children[key] = value
+
+        # set the new parent
+        if value is not None:
+            value._set_parent(self)
 
     def insert(self, index, item):
         """Insert an item into the composition at location `index`."""
@@ -422,14 +520,34 @@ class Composition(item.Item, collections.MutableSequence):
                 )
             )
 
+        if item in self:
+            raise ValueError(
+                "Composable {} already present in this container, instancing"
+                " not allowed in otio compositions.".format(item)
+            )
+
         item._set_parent(self)
         self._children.insert(index, item)
 
     def __len__(self):
+        """The len() of a Composition is the # of children in it.
+        Note that this also means that a Composition with no children
+        is considered False, so take care to test for "if foo is not None"
+        versus just "if foo" when the difference matters."""
         return len(self._children)
 
-    def __delitem__(self, item):
-        thing = self._children[item]
-        del self._children[item]
-        thing._set_parent(None)
+    def __delitem__(self, key):
+        # grab the old value
+        old = self._children[key]
+
+        # remove it from our list of children
+        del self._children[key]
+
+        # unset the old value's parent
+        if old is not None:
+            if isinstance(key, slice):
+                for val in old:
+                    val._set_parent(None)
+            else:
+                old._set_parent(None)
     # @}

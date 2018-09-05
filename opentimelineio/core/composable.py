@@ -24,7 +24,7 @@
 
 """Composable class definition.
 
-An object that can be composed by sequences.
+An object that can be composed by tracks.
 """
 
 from . import serializable_object
@@ -33,7 +33,7 @@ from . import type_registry
 
 @type_registry.register_type
 class Composable(serializable_object.SerializableObject):
-    """An object that can be composed by sequences.
+    """An object that can be composed by tracks.
 
     Base class of:
         Item
@@ -58,10 +58,7 @@ class Composable(serializable_object.SerializableObject):
 
         # initialize the serializable fields
         self.name = name
-
-        if metadata is None:
-            metadata = {}
-        self.metadata = metadata
+        self.metadata = metadata or {}
 
     @staticmethod
     def visible():
@@ -93,12 +90,6 @@ class Composable(serializable_object.SerializableObject):
         return self._parent
 
     def _set_parent(self, new_parent):
-        if self._parent is not None and (
-            hasattr(self._parent, "remove") and
-            self in self._parent
-        ):
-            self._parent.remove(self)
-
         self._parent = new_parent
 
     def is_parent_of(self, other):

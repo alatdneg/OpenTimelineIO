@@ -25,10 +25,10 @@
 import os
 import unittest
 
-from tests import baseline_reader
+import baseline_reader
 
 import opentimelineio as otio
-from tests import utils
+import utils
 
 LINKER_PATH = "media_linker_example"
 MANIFEST_PATH = "adapter_plugin_manifest.plugin_manifest"
@@ -68,7 +68,7 @@ class TestPluginMediaLinker(unittest.TestCase):
         cl = otio.schema.Clip(name="foo")
 
         linked_mr = self.mln.link_media_reference(cl, {"extra_data": True})
-        self.assertIsInstance(linked_mr, otio.media_reference.MissingReference)
+        self.assertIsInstance(linked_mr, otio.schema.MissingReference)
         self.assertEqual(linked_mr.name, cl.name + "_tweaked")
         self.assertEqual(linked_mr.metadata.get("extra_data"), True)
 
@@ -94,3 +94,18 @@ class TestPluginMediaLinker(unittest.TestCase):
                 repr(self.mln.filepath)
             )
         )
+
+    def test_available_media_linker_names(self):
+        # for not just assert that it returns a non-empty list
+        self.assertTrue(otio.media_linker.available_media_linker_names())
+
+    def test_default_media_linker(self):
+        os.environ['OTIO_DEFAULT_MEDIA_LINKER'] = 'foo'
+        self.assertEqual(otio.media_linker.default_media_linker(), 'foo')
+        with self.assertRaises(otio.exceptions.NoDefaultMediaLinkerError):
+            del os.environ['OTIO_DEFAULT_MEDIA_LINKER']
+            otio.media_linker.default_media_linker()
+
+    def test_from_name_fail(self):
+        with self.assertRaises(otio.exceptions.NotSupportedError):
+            otio.media_linker.from_name("should not exist")

@@ -27,7 +27,7 @@ import unittest
 import opentimelineio as otio
 
 
-class EffectTest(unittest.TestCase):
+class EffectTest(unittest.TestCase, otio.test_utils.OTIOAssertions):
 
     def test_cons(self):
         ef = otio.schema.Effect(
@@ -37,7 +37,7 @@ class EffectTest(unittest.TestCase):
         )
         encoded = otio.adapters.otio_json.write_to_string(ef)
         decoded = otio.adapters.otio_json.read_from_string(encoded)
-        self.assertEqual(ef, decoded)
+        self.assertIsOTIOEquivalentTo(ef, decoded)
         self.assertEqual(decoded.name, "blur it")
         self.assertEqual(decoded.effect_name, "blur")
         self.assertEqual(decoded.metadata['foo'], 'bar')
@@ -53,7 +53,7 @@ class EffectTest(unittest.TestCase):
             effect_name="blur",
             metadata={"foo": "bar"}
         )
-        self.assertEqual(ef, ef2)
+        self.assertIsOTIOEquivalentTo(ef, ef2)
 
     def test_str(self):
         ef = otio.schema.Effect(
@@ -81,3 +81,21 @@ class EffectTest(unittest.TestCase):
                 repr(ef.metadata),
             )
         )
+
+
+class TestLinearTimeWarp(unittest.TestCase):
+    def test_cons(self):
+        ef = otio.schema.LinearTimeWarp("Foo", 2.5, {'foo': 'bar'})
+        self.assertEqual(ef.effect_name, "LinearTimeWarp")
+        self.assertEqual(ef.name, "Foo")
+        self.assertEqual(ef.time_scalar, 2.5)
+        self.assertEqual(ef.metadata, {"foo": "bar"})
+
+
+class TestFreezeFrame(unittest.TestCase):
+    def test_cons(self):
+        ef = otio.schema.FreezeFrame("Foo", {'foo': 'bar'})
+        self.assertEqual(ef.effect_name, "FreezeFrame")
+        self.assertEqual(ef.name, "Foo")
+        self.assertEqual(ef.time_scalar, 0)
+        self.assertEqual(ef.metadata, {"foo": "bar"})

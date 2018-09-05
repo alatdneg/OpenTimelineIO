@@ -24,6 +24,8 @@
 
 """Implementation of the Item base class.  OTIO Objects that contain media."""
 
+import copy
+
 from .. import (
     opentime,
     exceptions,
@@ -63,19 +65,9 @@ class Item(composable.Composable):
 
         self.name = name
         self.source_range = source_range
-
-        if effects is None:
-            effects = []
-        self.effects = effects
-
-        if markers is None:
-            markers = []
-        self.markers = markers
-
-        if metadata is None:
-            metadata = {}
-        self.metadata = metadata
-
+        self.effects = effects or []
+        self.markers = markers or []
+        self.metadata = metadata or {}
         self._parent = None
 
     name = serializable_object.serializable_field("name", doc="Item name.")
@@ -104,19 +96,41 @@ class Item(composable.Composable):
     def trimmed_range(self):
         """The range after applying the source range."""
 
-        if self.source_range:
-            return self.source_range
+        if self.source_range is not None:
+            return copy.copy(self.source_range)
 
         return self.available_range()
 
+    def visible_range(self):
+        """The range of this item's media visible to its parent.
+        Includes handles revealed by adjacent transitions (if any)."""
+        result = self.trimmed_range()
+        if self.parent():
+            head, tail = self.parent().handles_of_child(self)
+            if head:
+                result.start_time -= head
+                result.duration += head
+            if tail:
+                result.duration += tail
+        return result
+
     def trimmed_range_in_parent(self):
-        """Find and return the timmed range of this item in the parent."""
+        """Find and return the trimmed range of this item in the parent."""
         if not self.parent():
             raise exceptions.NotAChildError(
                 "No parent of {}, cannot compute range in parent.".format(self)
             )
 
         return self.parent().trimmed_range_of_child(self)
+
+    def range_in_parent(self):
+        """Find and return the untrimmed range of this item in the parent."""
+        if not self.parent():
+            raise exceptions.NotAChildError(
+                "No parent of {}, cannot compute range in parent.".format(self)
+            )
+
+        return self.parent().range_of_child(self)
 
     def transformed_time(self, t, to_item):
         """Converts time t in the coordinate system of self to coordinate
@@ -136,7 +150,6 @@ class Item(composable.Composable):
         """
 
         # does not operate in place
-        import copy
         result = copy.copy(t)
 
         if to_item is None:

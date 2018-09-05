@@ -24,7 +24,10 @@
 
 """Implementation of an adapter registry system for OTIO."""
 
+import inspect
+import logging
 import os
+import pkg_resources
 
 from .. import (
     core,
@@ -97,7 +100,7 @@ class Manifest(core.SerializableObject):
             if name == thing.name:
                 return thing
 
-        raise NotImplementedError(
+        raise exceptions.NotSupportedError(
             "Could not find plugin: '{}' in kind_list: '{}'."
             " options: {}".format(
                 name,
@@ -120,16 +123,69 @@ def load_manifest():
     # build the manifest of adapters, starting with builtin adapters
     result = manifest_from_file(
         os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
+            os.path.dirname(os.path.dirname(inspect.getsourcefile(core))),
             "adapters",
             "builtin_adapters.plugin_manifest.json"
         )
     )
 
+    # layer contrib plugins after built in ones
+    try:
+        import opentimelineio_contrib as otio_c
+
+        contrib_manifest = manifest_from_file(
+            os.path.join(
+                os.path.dirname(inspect.getsourcefile(otio_c)),
+                "adapters",
+                "contrib_adapters.plugin_manifest.json"
+            )
+        )
+        result.adapters.extend(contrib_manifest.adapters)
+        result.media_linkers.extend(contrib_manifest.media_linkers)
+    except ImportError:
+        pass
+
+    # Discover setuptools-based plugins
+    for plugin in pkg_resources.iter_entry_points("opentimelineio.plugins"):
+        plugin_name = plugin.name
+        try:
+            plugin_entry_point = plugin.load()
+            try:
+                plugin_manifest = plugin_entry_point.plugin_manifest()
+            except AttributeError:
+                if not pkg_resources.resource_exists(
+                    plugin.module_name,
+                    'plugin_manifest.json'
+                ):
+                    raise
+                manifest_stream = pkg_resources.resource_stream(
+                    plugin.module_name,
+                    'plugin_manifest.json'
+                )
+                plugin_manifest = core.deserialize_json_from_string(
+                    manifest_stream.read().decode('utf-8')
+                )
+                manifest_stream.close()
+
+        except Exception:
+            logging.exception("could not load plugin: {}".format(plugin_name))
+            continue
+
+        result.adapters.extend(plugin_manifest.adapters)
+        result.media_linkers.extend(plugin_manifest.media_linkers)
+
     # read local adapter manifests, if they exist
     _local_manifest_path = os.environ.get("OTIO_PLUGIN_MANIFEST_PATH", None)
     if _local_manifest_path is not None:
         for json_path in _local_manifest_path.split(":"):
+            if not os.path.exists(json_path):
+                # XXX: In case error reporting is requested
+                # print(
+                #     "Warning: OpenTimelineIO cannot access path '{}' from "
+                #     "$OTIO_PLUGIN_MANIFEST_PATH".format(json_path)
+                # )
+                continue
+
             LOCAL_MANIFEST = manifest_from_file(json_path)
             result.adapters.extend(LOCAL_MANIFEST.adapters)
             result.media_linkers.extend(LOCAL_MANIFEST.media_linkers)

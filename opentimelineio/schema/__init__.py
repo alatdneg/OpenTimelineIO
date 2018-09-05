@@ -26,12 +26,18 @@
 
 """User facing classes."""
 
+from .missing_reference import (
+    MissingReference
+)
+from .external_reference import (
+    ExternalReference
+)
 from .clip import (
     Clip,
 ) 
-from .sequence import (
-    Sequence,
-    SequenceKind,
+from .track import (
+    Track,
+    TrackKind,
     NeighborGapPolicy,
 )
 from .stack import (
@@ -50,6 +56,9 @@ from .gap import (
 )
 from .effect import (
     Effect,
+    TimeEffect,
+    LinearTimeWarp,
+    FreezeFrame,
 )
 from .transition import (
     Transition,
@@ -57,4 +66,7 @@ from .transition import (
 )
 from .serializable_collection import (
     SerializableCollection
+)
+from .generator_reference import (
+    GeneratorReference
 )

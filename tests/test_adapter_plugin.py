@@ -23,9 +23,11 @@
 #
 import unittest
 import os
+import tempfile
 
 import opentimelineio as otio
-from tests import baseline_reader, utils
+import baseline_reader
+import utils
 
 """Unit tests for the adapter plugin system."""
 
@@ -46,7 +48,7 @@ class TestAdapterSuffixes(unittest.TestCase):
 class TestPluginAdapters(unittest.TestCase):
     def setUp(self):
         self.jsn = baseline_reader.json_baseline_as_string(ADAPTER_PATH)
-        self.adp = otio.adapters.otio_json.read_from_string(self.jsn)
+        self.adp = otio.adapters.read_from_string(self.jsn, 'otio_json')
         self.adp._json_path = os.path.join(
             baseline_reader.MODPATH,
             "baselines",
@@ -110,6 +112,9 @@ class TestPluginAdapters(unittest.TestCase):
         self.assertTrue(self.adp.has_feature("read"))
         self.assertTrue(self.adp.has_feature("read_from_file"))
         self.assertFalse(self.adp.has_feature("write"))
+
+    def test_pass_arguments_to_adapter(self):
+        self.assertEqual(self.adp.read_from_file("foo", suffix=3).name, "foo3")
 
     def test_run_media_linker_during_adapter(self):
         mfest = otio.plugins.ActiveManifest()
@@ -184,6 +189,15 @@ class TestPluginManifest(unittest.TestCase):
             ).name,
             "path"
         )
+
+    def test_find_manifest_by_environment_variable(self):
+        # write the file into a temp dir
+        suffix = ".plugin_manifest.json"
+        with tempfile.NamedTemporaryFile(suffix=suffix) as fpath:
+            os.environ['OTIO_PLUGIN_MANIFEST_PATH'] = fpath.name + ':foo'
+            otio.adapters.write_to_file(self.man, fpath.name, 'otio_json')
+            result = otio.plugins.manifest.load_manifest()
+            self.assertEqual(result.media_linkers[0].name, "example")
 
 
 if __name__ == '__main__':

@@ -36,10 +36,10 @@ from . import (
     opentime,
     exceptions,
     core,
-    media_reference,
     schema,
     plugins,
     adapters,
-    media_linker,
     algorithms,
+    test_utils,
+    console,
 )
