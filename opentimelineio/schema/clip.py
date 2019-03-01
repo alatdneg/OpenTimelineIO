@@ -24,10 +24,14 @@
 
 """Implementation of the Clip class, for pointing at media."""
 
+import copy
+
 from .. import (
     core,
-    media_reference as mr,
     exceptions,
+)
+from . import (
+    missing_reference
 )
 
 
@@ -45,40 +49,41 @@ class Clip(core.Item):
         name=None,
         media_reference=None,
         source_range=None,
+        markers=[],
+        effects=[],
         metadata=None,
     ):
         core.Item.__init__(
             self,
             name=name,
             source_range=source_range,
+            markers=markers,
+            effects=effects,
             metadata=metadata
         )
-        # init everything as None first, so that we will catch uninitialized
-        # values via exceptions
-        self.name = name
 
         if not media_reference:
-            media_reference = mr.MissingReference()
-        self._media_reference = media_reference
+            media_reference = missing_reference.MissingReference()
+        self._media_reference = copy.deepcopy(media_reference)
 
     name = core.serializable_field("name", doc="Name of this clip.")
     transform = core.deprecated_field()
     _media_reference = core.serializable_field(
         "media_reference",
-        mr.MediaReference,
+        core.MediaReference,
         "Media reference to the media this clip represents."
     )
 
     @property
     def media_reference(self):
         if self._media_reference is None:
-            self._media_reference = mr.MissingReference()
+            self._media_reference = missing_reference.MissingReference()
         return self._media_reference
 
     @media_reference.setter
     def media_reference(self, val):
         if val is None:
-            val = mr.MissingReference()
+            val = missing_reference.MissingReference()
         self._media_reference = val
 
     def available_range(self):
@@ -94,7 +99,7 @@ class Clip(core.Item):
                 )
             )
 
-        return self.media_reference.available_range
+        return copy.copy(self.media_reference.available_range)
 
     def __str__(self):
         return 'Clip("{}", {}, {}, {})'.format(

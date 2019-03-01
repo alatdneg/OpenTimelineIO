@@ -24,16 +24,20 @@
 
 """Composable class definition.
 
-An object that can be composed by sequences.
+An object that can be composed by tracks.
 """
+
+import weakref
 
 from . import serializable_object
 from . import type_registry
 
+import copy
+
 
 @type_registry.register_type
 class Composable(serializable_object.SerializableObject):
-    """An object that can be composed by sequences.
+    """An object that can be composed by tracks.
 
     Base class of:
         Item
@@ -58,10 +62,7 @@ class Composable(serializable_object.SerializableObject):
 
         # initialize the serializable fields
         self.name = name
-
-        if metadata is None:
-            metadata = {}
-        self.metadata = metadata
+        self.metadata = copy.deepcopy(metadata) if metadata else {}
 
     @staticmethod
     def visible():
@@ -82,34 +83,39 @@ class Composable(serializable_object.SerializableObject):
     def _ancestors(self):
         ancestors = []
         seqi = self
-        while seqi._parent is not None:
-            seqi = seqi._parent
+        while seqi.parent() is not None:
+            seqi = seqi.parent()
             ancestors.append(seqi)
         return ancestors
 
     def parent(self):
         """Return the parent Composable, or None if self has no parent."""
 
-        return self._parent
+        return self._parent() if self._parent is not None else None
 
     def _set_parent(self, new_parent):
-        if self._parent is not None and (
-            hasattr(self._parent, "remove") and
-            self in self._parent
-        ):
-            self._parent.remove(self)
-
-        self._parent = new_parent
+        if new_parent is not None and self.parent() is not None:
+            raise ValueError(
+                "Composable named '{}' is already in a composition named '{}',"
+                " remove from previous parent before adding to new one."
+                " Composable: {}, Composition: {}".format(
+                    self.name,
+                    self.parent() is not None and self.parent().name or None,
+                    self,
+                    self.parent()
+                )
+            )
+        self._parent = weakref.ref(new_parent) if new_parent is not None else None
 
     def is_parent_of(self, other):
         """Returns true if self is a parent or ancestor of other."""
 
         visited = set([])
-        while other._parent is not None and other._parent not in visited:
-            if other._parent is self:
+        while other.parent() is not None and other.parent() not in visited:
+            if other.parent() is self:
                 return True
             visited.add(other)
-            other = other._parent
+            other = other.parent()
 
         return False
 

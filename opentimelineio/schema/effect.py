@@ -28,6 +28,8 @@ from .. import (
     core
 )
 
+import copy
+
 
 @core.register_type
 class Effect(core.SerializableObject):
@@ -39,14 +41,10 @@ class Effect(core.SerializableObject):
         effect_name=None,
         metadata=None
     ):
-        core.SerializableObject.__init__(self)
+        super(Effect, self).__init__()
         self.name = name
         self.effect_name = effect_name
-
-        if metadata is None:
-            metadata = {}
-        self.metadata = metadata
-        self.metadata = metadata
+        self.metadata = copy.deepcopy(metadata) if metadata else {}
 
     name = core.serializable_field(
         "name",
@@ -87,3 +85,46 @@ class Effect(core.SerializableObject):
                 repr(self.metadata),
             )
         )
+
+
+@core.register_type
+class TimeEffect(Effect):
+    "Base Time Effect Class"
+    _serializable_label = "TimeEffect.1"
+    pass
+
+
+@core.register_type
+class LinearTimeWarp(TimeEffect):
+    "A time warp that applies a linear scale across the entire clip"
+    _serializable_label = "LinearTimeWarp.1"
+
+    def __init__(self, name=None, time_scalar=1, metadata=None):
+        Effect.__init__(
+            self,
+            name=name,
+            effect_name="LinearTimeWarp",
+            metadata=metadata
+        )
+        self.time_scalar = time_scalar
+
+    time_scalar = core.serializable_field(
+        "time_scalar",
+        doc="Linear time scalar applied to clip.  "
+        "2.0 = double speed, 0.5 = half speed."
+    )
+
+
+@core.register_type
+class FreezeFrame(LinearTimeWarp):
+    "Hold the first frame of the clip for the duration of the clip."
+    _serializable_label = "FreezeFrame.1"
+
+    def __init__(self, name=None, metadata=None):
+        LinearTimeWarp.__init__(
+            self,
+            name=name,
+            time_scalar=0,
+            metadata=metadata
+        )
+        self.effect_name = "FreezeFrame"

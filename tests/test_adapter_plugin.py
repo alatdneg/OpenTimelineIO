@@ -23,6 +23,7 @@
 #
 import unittest
 import os
+import tempfile
 
 import opentimelineio as otio
 from tests import baseline_reader, utils
@@ -46,7 +47,7 @@ class TestAdapterSuffixes(unittest.TestCase):
 class TestPluginAdapters(unittest.TestCase):
     def setUp(self):
         self.jsn = baseline_reader.json_baseline_as_string(ADAPTER_PATH)
-        self.adp = otio.adapters.otio_json.read_from_string(self.jsn)
+        self.adp = otio.adapters.read_from_string(self.jsn, 'otio_json')
         self.adp._json_path = os.path.join(
             baseline_reader.MODPATH,
             "baselines",
@@ -110,6 +111,9 @@ class TestPluginAdapters(unittest.TestCase):
         self.assertTrue(self.adp.has_feature("read"))
         self.assertTrue(self.adp.has_feature("read_from_file"))
         self.assertFalse(self.adp.has_feature("write"))
+
+    def test_pass_arguments_to_adapter(self):
+        self.assertEqual(self.adp.read_from_file("foo", suffix=3).name, "foo3")
 
     def test_run_media_linker_during_adapter(self):
         mfest = otio.plugins.ActiveManifest()
@@ -184,6 +188,37 @@ class TestPluginManifest(unittest.TestCase):
             ).name,
             "path"
         )
+
+    def test_find_manifest_by_environment_variable(self):
+        suffix = ".plugin_manifest.json"
+
+        # back up existing manifest
+        bak = otio.plugins.manifest._MANIFEST
+        bak_env = os.environ.get('OTIO_PLUGIN_MANIFEST_PATH')
+
+        # Generate a fake manifest in a temp file, and point at it with
+        # the environment variable
+        with tempfile.NamedTemporaryFile(suffix=suffix) as fpath:
+            otio.adapters.write_to_file(self.man, fpath.name, 'otio_json')
+
+            # clear out existing manifest
+            otio.plugins.manifest._MANIFEST = None
+
+            # set where to find the new manifest
+            os.environ['OTIO_PLUGIN_MANIFEST_PATH'] = fpath.name + ':foo'
+            result = otio.plugins.manifest.load_manifest()
+
+            # Rather than try and remove any other setuptools based plugins
+            # that might be installed, this check is made more permissive to
+            # see if the known unit test linker is being loaded by the manifest
+            self.assertTrue(len(result.media_linkers) > 0)
+            self.assertIn("example", (ml.name for ml in result.media_linkers))
+
+        otio.plugins.manifest._MANIFEST = bak
+        if bak_env:
+            os.environ['OTIO_PLUGIN_MANIFEST_PATH'] = bak_env
+        else:
+            del os.environ['OTIO_PLUGIN_MANIFEST_PATH']
 
 
 if __name__ == '__main__':

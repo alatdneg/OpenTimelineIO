@@ -47,22 +47,21 @@ class SerializableObject(object):
     read or write to that attribute.  After testing and before pushing, please
     remove references to deprecated_field.
 
-    For example:
-        import opentimelineio as otio
+    For example
 
-        @otio.core.register_type
-        class ExampleChild(otio.core.SerializableObject):
-            _serializable_label = "ExampleChild.7"
+    >>>    import opentimelineio as otio
 
-            child_data = otio.core.serializable_field("child_data", int)
+    >>>    @otio.core.register_type
+    ...    class ExampleChild(otio.core.SerializableObject):
+    ...        _serializable_label = "ExampleChild.7"
+    ...        child_data = otio.core.serializable_field("child_data", int)
 
-            # @TODO: delete once testing shows nothing is referencing this.
-            old_child_data_name = otio.core.deprecated_field()
+    # @TODO: delete once testing shows nothing is referencing this.
+    >>>         old_child_data_name = otio.core.deprecated_field()
 
-
-        @otio.core.upgrade_function_for(ExampleChild, 3)
-        def upgrade_child_to_three(data):
-            return {"child_data" : data["old_child_data_name"]}
+    >>>    @otio.core.upgrade_function_for(ExampleChild, 3)
+    ...    def upgrade_child_to_three(_data):
+    ...        return {"child_data" : _data["old_child_data_name"]}
     """
 
     # Every child must define a _serializable_label attribute.
@@ -74,39 +73,60 @@ class SerializableObject(object):
     _class_path = "core.SerializableObject"
 
     def __init__(self):
-        self.data = {}
+        self._data = {}
 
-    def __eq__(self, other):
+    # @{ "Reference Type" semantics for SerializableObject
+    # We think of the SerializableObject as a reference type - by default
+    # comparison is pointer comparison, but you can use 'is_equivalent_to' to
+    # check if the contents of the SerializableObject are the same as some
+    # other SerializableObject's contents.
+    #
+    # Implicitly:
+    # def __eq__(self, other):
+    #     return self is other
+
+    def is_equivalent_to(self, other):
+        """Returns true if the contents of self and other match."""
+
         try:
-            return (self.data == other.data)
+            if self._data == other._data:
+                return True
+
+            # XXX: Gross hack takes OTIO->JSON String->Python Dictionaries
+            #
+            # using the serializer ensures that we only compare fields that are
+            # serializable, which is how we define equivalence.
+            #
+            # we use json.loads() to turn the string back into dictionaries
+            # so we can use python's equivalence for things like floating
+            # point numbers (ie 5.0 == 5) without having to do string
+            # processing.
+
+            from . import json_serializer
+            import json
+
+            lhs_str = json_serializer.serialize_json_to_string(self)
+            lhs = json.loads(lhs_str)
+
+            rhs_str = json_serializer.serialize_json_to_string(other)
+            rhs = json.loads(rhs_str)
+
+            return (lhs == rhs)
         except AttributeError:
             return False
+    # @}
 
-    def __hash__(self):
-        # Because the children of this class should implement their own
-        # versions of __eq__ and __hash__, this is really meant to be a
-        # "reasonable default" to get things up and running until that is
-        # possible.
-        #
-        # As such it is using the simple ugly hack implementation of
-        # stringifying.
-        #
-        # If this is ever a problem it should be replaced with a more robust
-        # implementation.
-
-        return hash(str(self.data))
-
-    def update(self, d):
+    def _update(self, d):
         """Like the dictionary .update() method.
 
-        Update the data dictionary of this SerializableObject with the .data
+        Update the _data dictionary of this SerializableObject with the ._data
         of d if d is a SerializableObject or if d is a dictionary, d itself.
         """
 
         if isinstance(d, SerializableObject):
-            self.data.update(d.data)
+            self._data.update(d._data)
         else:
-            self.data.update(d)
+            self._data.update(d)
 
     @classmethod
     def schema_name(cls):
@@ -120,18 +140,20 @@ class SerializableObject(object):
             cls._serializable_label
         )
 
+    @property
+    def is_unknown_schema(self):
+        # in general, SerializableObject will have a known schema
+        # but UnknownSchema subclass will redefine this property to be True
+        return False
+
     def __copy__(self):
-        result = self.__class__()
-        result.data = copy.copy(self.data)
-
-        return result
-
-    def copy(self):
-        return self.__copy__()
+        raise NotImplementedError(
+            "Shallow copying is not permitted.  Use a deep copy."
+        )
 
     def __deepcopy__(self, md):
         result = type(self)()
-        result.data = copy.deepcopy(self.data, md)
+        result._data = copy.deepcopy(self._data, md)
 
         return result
 
@@ -166,24 +188,21 @@ def serializable_field(name, required_type=None, doc=None):
     """
 
     def getter(self):
-        return self.data[name]
+        return self._data[name]
 
     def setter(self, val):
         # always allow None values regardless of value of required_type
-        if (
-            required_type is not None
-            and val is not None
-            and not isinstance(val, required_type)
-        ):
-            raise TypeError(
-                "attribute '{}' must be an instance of '{}', not: {}".format(
-                    name,
-                    required_type,
-                    type(val)
+        if required_type is not None and val is not None:
+            if not isinstance(val, required_type):
+                raise TypeError(
+                    "attribute '{}' must be an instance of '{}', not: {}".format(
+                        name,
+                        required_type,
+                        type(val)
+                    )
                 )
-            )
 
-        self.data[name] = val
+        self._data[name] = val
 
     return property(getter, setter, doc=doc)
 

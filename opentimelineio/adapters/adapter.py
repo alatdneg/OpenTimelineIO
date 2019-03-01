@@ -25,13 +25,14 @@
 """Implementation of the OTIO internal `Adapter` system.
 
 For information on writing adapters, please consult:
-    https://github.com/PixarAnimationStudios/OpenTimelineIO/wiki/How-to-Write-an-OpenTimelineIO-Adapter # noqa
+    https://opentimelineio.readthedocs.io/en/latest/tutorials/write-an-adapter.html# # noqa
 """
 
 from .. import (
     core,
     plugins,
     media_linker,
+    hooks,
 )
 
 
@@ -41,6 +42,7 @@ class Adapter(plugins.PythonPlugin):
 
     Note that this class is not subclassed by adapters.  Rather, an adapter is
     a python module that implements at least one of the following functions:
+
         write_to_string(input_otio)
         write_to_file(input_otio, filepath) (optionally inferred)
         read_from_string(input_str)
@@ -52,7 +54,7 @@ class Adapter(plugins.PythonPlugin):
     for OTIO.
 
     For more information:
-        https://github.com/PixarAnimationStudios/OpenTimelineIO/wiki/How-to-Write-an-OpenTimelineIO-Adapter # noqa
+    https://opentimelineio.readthedocs.io/en/latest/tutorials/write-an-adapter.html# # noqa
     """
     _serializable_label = "Adapter.1"
 
@@ -70,9 +72,7 @@ class Adapter(plugins.PythonPlugin):
             filepath
         )
 
-        if suffixes is None:
-            suffixes = []
-        self.suffixes = suffixes
+        self.suffixes = suffixes or []
 
     suffixes = core.serializable_field(
         "suffixes",
@@ -88,7 +88,7 @@ class Adapter(plugins.PythonPlugin):
         Will trigger a call to self.module(), which imports the plugin.
         """
 
-        if feature_string.lower() not in _FEATURE_MAP.keys():
+        if feature_string.lower() not in _FEATURE_MAP:
             return False
 
         search_strs = _FEATURE_MAP[feature_string]
@@ -103,7 +103,8 @@ class Adapter(plugins.PythonPlugin):
         self,
         filepath,
         media_linker_name=media_linker.MediaLinkingPolicy.ForceDefaultLinker,
-        media_linker_argument_map=None
+        media_linker_argument_map=None,
+        **adapter_argument_map
     ):
         """Execute the read_from_file function on this adapter.
 
@@ -124,13 +125,18 @@ class Adapter(plugins.PythonPlugin):
                 contents = fo.read()
             result = self._execute_function(
                 "read_from_string",
-                input_str=contents
+                input_str=contents,
+                **adapter_argument_map
             )
         else:
             result = self._execute_function(
                 "read_from_file",
-                filepath=filepath
+                filepath=filepath,
+                **adapter_argument_map
             )
+
+        # @TODO: pass arguments through?
+        result = hooks.run("post_adapter_read", result)
 
         if media_linker_name and (
             media_linker_name != media_linker.MediaLinkingPolicy.DoNotLinkMedia
@@ -141,20 +147,26 @@ class Adapter(plugins.PythonPlugin):
                 media_linker_argument_map
             )
 
+        # @TODO: pass arguments through?
+        result = hooks.run("post_media_linker", result)
+
         return result
 
-    def write_to_file(self, input_otio, filepath):
+    def write_to_file(self, input_otio, filepath, **adapter_argument_map):
         """Execute the write_to_file function on this adapter.
 
         If write_to_string exists, but not write_to_file, execute that with
         a trivial file object wrapper.
         """
 
+        # @TODO: pass arguments through?
+        input_otio = hooks.run("pre_adapter_write", input_otio)
+
         if (
             not self.has_feature("write_to_file") and
             self.has_feature("write_to_string")
         ):
-            result = self.write_to_string(input_otio)
+            result = self.write_to_string(input_otio, **adapter_argument_map)
             with open(filepath, 'w') as fo:
                 fo.write(result)
             return filepath
@@ -162,21 +174,27 @@ class Adapter(plugins.PythonPlugin):
         return self._execute_function(
             "write_to_file",
             input_otio=input_otio,
-            filepath=filepath
+            filepath=filepath,
+            **adapter_argument_map
         )
 
     def read_from_string(
         self,
         input_str,
         media_linker_name=media_linker.MediaLinkingPolicy.ForceDefaultLinker,
-        media_linker_argument_map=None
+        media_linker_argument_map=None,
+        **adapter_argument_map
     ):
         """Call the read_from_string function on this adapter."""
 
         result = self._execute_function(
             "read_from_string",
-            input_str=input_str
+            input_str=input_str,
+            **adapter_argument_map
         )
+
+        # @TODO: pass arguments through?
+        result = hooks.run("post_adapter_read", result)
 
         if media_linker_name and (
             media_linker_name != media_linker.MediaLinkingPolicy.DoNotLinkMedia
@@ -187,12 +205,23 @@ class Adapter(plugins.PythonPlugin):
                 media_linker_argument_map
             )
 
+        # @TODO: pass arguments through?
+        # @TODO: Should this run *ONLY* if the media linker ran?
+        result = hooks.run("post_media_linker", result)
+
         return result
 
-    def write_to_string(self, input_otio):
+    def write_to_string(self, input_otio, **adapter_argument_map):
         """Call the write_to_string function on this adapter."""
 
-        return self._execute_function("write_to_string", input_otio=input_otio)
+        # @TODO: pass arguments through?
+        input_otio = hooks.run("pre_adapter_write", input_otio)
+
+        return self._execute_function(
+            "write_to_string",
+            input_otio=input_otio,
+            **adapter_argument_map
+        )
 
     def __str__(self):
         return (

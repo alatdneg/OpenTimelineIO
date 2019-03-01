@@ -29,7 +29,7 @@ import unittest
 import opentimelineio as otio
 
 
-class ComposableTests(unittest.TestCase):
+class ComposableTests(unittest.TestCase, otio.test_utils.OTIOAssertions):
     def test_constructor(self):
         seqi = otio.core.Composable(
             name="test",
@@ -45,7 +45,7 @@ class ComposableTests(unittest.TestCase):
         )
         encoded = otio.adapters.otio_json.write_to_string(seqi)
         decoded = otio.adapters.otio_json.read_from_string(encoded)
-        self.assertEqual(seqi, decoded)
+        self.assertIsOTIOEquivalentTo(seqi, decoded)
 
     def test_stringify(self):
         seqi = otio.core.Composable()
@@ -76,7 +76,7 @@ class ComposableTests(unittest.TestCase):
         seqi.metadata["foo"] = "bar"
         encoded = otio.adapters.otio_json.write_to_string(seqi)
         decoded = otio.adapters.otio_json.read_from_string(encoded)
-        self.assertEqual(seqi, decoded)
+        self.assertIsOTIOEquivalentTo(seqi, decoded)
         self.assertEqual(decoded.metadata["foo"], seqi.metadata["foo"])
 
     def test_set_parent(self):
@@ -85,9 +85,13 @@ class ComposableTests(unittest.TestCase):
 
         # set seqi from none
         seqi_2._set_parent(seqi)
-        self.assertEqual(seqi, seqi_2._parent)
+        self.assertEqual(seqi, seqi_2.parent())
 
         # change seqi
         seqi_3 = otio.core.Composable()
+        with self.assertRaises(ValueError):
+            seqi_2._set_parent(seqi_3)
+        # remove it from other object
+        seqi_2._set_parent(None)
         seqi_2._set_parent(seqi_3)
-        self.assertEqual(seqi_3, seqi_2._parent)
+        self.assertEqual(seqi_3, seqi_2.parent())

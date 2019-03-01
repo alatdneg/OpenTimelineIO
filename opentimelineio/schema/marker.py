@@ -67,17 +67,15 @@ class Marker(core.SerializableObject):
         self.name = name
         self.marked_range = marked_range
         self.color = color
-
-        if metadata is None:
-            metadata = {}
-        self.metadata = metadata
+        self.metadata = metadata or {}
 
     name = core.serializable_field("name", str, "Name of this marker.")
 
     marked_range = core.serializable_field(
         "marked_range",
         opentime.TimeRange,
-        "Range this marker applies to."
+        "Range this marker applies to, relative to the Item this marker is "
+        "attached to (e.g. the Clip or Track that owns this marker)."
     )
 
     color = core.serializable_field(
@@ -95,24 +93,6 @@ class Marker(core.SerializableObject):
         dict,
         "Metadata dictionary."
     )
-
-    def __eq__(self, other):
-        try:
-            return (
-                (self.name, self.marked_range, self.metadata) ==
-                (other.name, other.marked_range, other.metadata)
-            )
-        except (KeyError, AttributeError):
-            return False
-
-    def __hash__(self):
-        return hash(
-            (
-                self.name,
-                self.marked_range,
-                tuple(self.metadata.items())
-            )
-        )
 
     def __repr__(self):
         return (

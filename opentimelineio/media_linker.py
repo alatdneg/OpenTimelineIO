@@ -22,21 +22,21 @@
 # language governing permissions and limitations under the Apache License.
 #
 
-""" MediaLinker plugins fire after an adapter has read a file in oder to
+""" MediaLinker plugins fire after an adapter has read a file in order to
 produce MediaReferences that point at valid, site specific media.
 
 They expose a "link_media_reference" function with the signature:
-link_media_reference :: otio.schema.Clip -> otio.media_reference.MediaReference
+link_media_reference :: otio.schema.Clip -> otio.core.MediaReference
 
 or:
     def linked_media_reference(from_clip):
-        result = otio.media_reference.MediaReference() # whichever subclass
+        result = otio.core.MediaReference() # whichever subclass
         # do stuff
         return result
 
 To get context information, they can inspect the metadata on the clip and on
 the media reference.  The .parent() method can be used to find the containing
-sequence if metadata is stored there.
+track if metadata is stored there.
 
 Please raise an instance (or child instance) of
 otio.exceptions.CannotLinkMediaError() if there is a problem linking the media.
@@ -137,7 +137,7 @@ class MediaLinker(plugins.PythonPlugin):
         execution_scope=None,
         filepath=None,
     ):
-        plugins.PythonPlugin.__init__(self, name, execution_scope, filepath)
+        super(MediaLinker, self).__init__(name, execution_scope, filepath)
 
     def link_media_reference(self, in_clip, media_linker_argument_map=None):
         media_linker_argument_map = media_linker_argument_map or {}

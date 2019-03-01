@@ -24,6 +24,8 @@
 
 """Implementation of the Item base class.  OTIO Objects that contain media."""
 
+import copy
+
 from .. import (
     opentime,
     exceptions,
@@ -59,24 +61,11 @@ class Item(composable.Composable):
         markers=None,
         metadata=None,
     ):
-        serializable_object.SerializableObject.__init__(self)
+        super(Item, self).__init__(name=name, metadata=metadata)
 
-        self.name = name
-        self.source_range = source_range
-
-        if effects is None:
-            effects = []
-        self.effects = effects
-
-        if markers is None:
-            markers = []
-        self.markers = markers
-
-        if metadata is None:
-            metadata = {}
-        self.metadata = metadata
-
-        self._parent = None
+        self.source_range = copy.deepcopy(source_range)
+        self.effects = copy.deepcopy(effects) if effects else []
+        self.markers = copy.deepcopy(markers) if markers else []
 
     name = serializable_object.serializable_field("name", doc="Item name.")
     source_range = serializable_object.serializable_field(
@@ -103,20 +92,47 @@ class Item(composable.Composable):
 
     def trimmed_range(self):
         """The range after applying the source range."""
-
-        if self.source_range:
-            return self.source_range
+        if self.source_range is not None:
+            return copy.copy(self.source_range)
 
         return self.available_range()
 
+    def visible_range(self):
+        """The range of this item's media visible to its parent.
+        Includes handles revealed by adjacent transitions (if any).
+        This will always be larger or equal to trimmed_range()."""
+        result = self.trimmed_range()
+        if self.parent():
+            head, tail = self.parent().handles_of_child(self)
+            if head:
+                result = opentime.TimeRange(
+                    start_time=result.start_time - head,
+                    duration=result.duration + head
+                )
+            if tail:
+                result = opentime.TimeRange(
+                    start_time=result.start_time,
+                    duration=result.duration + tail
+                )
+        return result
+
     def trimmed_range_in_parent(self):
-        """Find and return the timmed range of this item in the parent."""
+        """Find and return the trimmed range of this item in the parent."""
         if not self.parent():
             raise exceptions.NotAChildError(
                 "No parent of {}, cannot compute range in parent.".format(self)
             )
 
         return self.parent().trimmed_range_of_child(self)
+
+    def range_in_parent(self):
+        """Find and return the untrimmed range of this item in the parent."""
+        if not self.parent():
+            raise exceptions.NotAChildError(
+                "No parent of {}, cannot compute range in parent.".format(self)
+            )
+
+        return self.parent().range_of_child(self)
 
     def transformed_time(self, t, to_item):
         """Converts time t in the coordinate system of self to coordinate
@@ -126,17 +142,24 @@ class Item(composable.Composable):
         have a common ancestor).
 
         Example:
-        0                      20
-        [------*----D----------]
-        [--A--|*----B----|--C--]
-             100 101    110
-        101 in B = 6 in D
 
-        * = t argument
+            0                      20
+            [------t----D----------]
+            [--A-][t----B---][--C--]
+            100    101    110
+            101 in B = 6 in D
+
+        t = t argument
         """
 
+        if not isinstance(t, opentime.RationalTime):
+            raise ValueError(
+                "transformed_time only operates on RationalTime, not {}".format(
+                    type(t)
+                )
+            )
+
         # does not operate in place
-        import copy
         result = copy.copy(t)
 
         if to_item is None:
@@ -148,7 +171,7 @@ class Item(composable.Composable):
         item = self
         while item != root and item != to_item:
 
-            parent = item._parent
+            parent = item.parent()
             result -= item.trimmed_range().start_time
             result += parent.range_of_child(item).start_time
 
@@ -160,20 +183,18 @@ class Item(composable.Composable):
         item = to_item
         while item != root and item != ancestor:
 
-            parent = item._parent
+            parent = item.parent()
             result += item.trimmed_range().start_time
             result -= parent.range_of_child(item).start_time
 
             item = parent
 
-        assert(item == ancestor)
+        assert(item is ancestor)
 
         return result
 
     def transformed_time_range(self, tr, to_item):
-        """Transforms the timerange tr to the range of child or self to_item.
-
-        """
+        """Transforms the timerange tr to the range of child or self to_item."""
 
         return opentime.TimeRange(
             self.transformed_time(tr.start_time, to_item),

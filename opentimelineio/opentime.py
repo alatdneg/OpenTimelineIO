@@ -30,6 +30,29 @@ simple.
 """
 
 import math
+import copy
+
+
+VALID_NON_DROPFRAME_TIMECODE_RATES = (
+    1,
+    12,
+    23.976,
+    23.98,
+    24,
+    25,
+    30,
+    48,
+    50,
+    60)
+
+VALID_DROPFRAME_TIMECODE_RATES = (
+    29.97,
+    59.94)
+
+VALID_TIMECODE_RATES = (
+    VALID_NON_DROPFRAME_TIMECODE_RATES + VALID_DROPFRAME_TIMECODE_RATES)
+
+_fn_cache = object.__setattr__
 
 
 class RationalTime(object):
@@ -37,15 +60,33 @@ class RationalTime(object):
     from time 0seconds.
     """
 
-    def __init__(self, value=0, rate=1):
-        self.value = value
-        self.rate = rate
+    # Locks RationalTime instances to only these attributes
+    __slots__ = ['value', 'rate']
+
+    def __init__(self, value=0.0, rate=1.0):
+        _fn_cache(self, "value", value)
+        _fn_cache(self, "rate", rate)
+
+    def __setattr__(self, key, val):
+        """Enforces immutability """
+        raise AttributeError("RationalTime is Immutable.")
+
+    def __copy__(self, memodict=None):
+        return RationalTime(self.value, self.rate)
+
+    # Always deepcopy, since we want this class to behave like a value type
+    __deepcopy__ = __copy__
 
     def rescaled_to(self, new_rate):
         """Returns the time for this time converted to new_rate"""
 
-        if isinstance(new_rate, RationalTime):
+        try:
             new_rate = new_rate.rate
+        except AttributeError:
+            pass
+
+        if self.rate == new_rate:
+            return copy.copy(self)
 
         return RationalTime(
             self.value_rescaled_to(new_rate),
@@ -55,17 +96,18 @@ class RationalTime(object):
     def value_rescaled_to(self, new_rate):
         """Returns the time value for self converted to new_rate"""
 
+        try:
+            new_rate = new_rate.rate
+        except AttributeError:
+            pass
+
         if new_rate == self.rate:
             return self.value
 
-        if isinstance(new_rate, RationalTime):
-            new_rate = new_rate.rate
-
         # TODO: This math probably needs some overrun protection
-        # TODO: Don't we want to enforce integers here?
         try:
-            return (float(self.value) * float(new_rate)) / float(self.rate)
-        except (TypeError, ValueError):
+            return float(self.value) * float(new_rate) / float(self.rate)
+        except (AttributeError, TypeError, ValueError):
             raise TypeError(
                 "Sorry, RationalTime cannot be rescaled to a value of type "
                 "'{}', only RationalTime and numbers are supported.".format(
@@ -73,34 +115,13 @@ class RationalTime(object):
                 )
             )
 
-    def __iadd__(self, other):
-        """ += operator for self with another RationalTime.
+    def almost_equal(self, other, delta=0.0):
+        try:
+            rescaled_value = self.value_rescaled_to(other.rate)
+            return abs(rescaled_value - other.value) <= delta
 
-        If self and other have differing time rates, the result will have the
-        have the rate of the faster time.
-        """
-
-        if not isinstance(other, RationalTime):
-            raise TypeError(
-                "RationalTime may only be added to other objects of type "
-                "RationalTime, not {}.".format(type(other))
-            )
-
-        if self.rate == other.rate:
-            self.value += other.value
-            return self
-
-        if self.rate > other.rate:
-            scale = self.rate
-            value = (self.value + other.value_rescaled_to(scale))
-        else:
-            scale = other.rate
-            value = (self.value_rescaled_to(scale) + other.value)
-
-        self.value = value
-        self.rate = scale
-
-        return self
+        except AttributeError:
+            return False
 
     def __add__(self, other):
         """Returns a RationalTime object that is the sum of self and other.
@@ -109,28 +130,54 @@ class RationalTime(object):
         have the rate of the faster time.
         """
 
-        if not isinstance(other, RationalTime):
-            raise TypeError(
-                "RationalTime may only be added to other objects of type "
-                "RationalTime, not {}.".format(type(other))
-            )
-        if self.rate == other.rate:
-            return RationalTime(self.value + other.value, self.rate)
-        elif self.rate > other.rate:
-            scale = self.rate
-            value = (self.value + other.value_rescaled_to(scale))
-        else:
-            scale = other.rate
-            value = (self.value_rescaled_to(scale) + other.value)
-        return RationalTime(value=value, rate=scale)
+        try:
+            if self.rate == other.rate:
+                return RationalTime(self.value + other.value, self.rate)
+        except AttributeError:
+            if not isinstance(other, RationalTime):
+                raise TypeError(
+                    "RationalTime may only be added to other objects of type "
+                    "RationalTime, not {}.".format(type(other))
+                )
+            raise
 
-    def __sub__(self, other):
         if self.rate > other.rate:
             scale = self.rate
-            value = (self.value - other.value_rescaled_to(scale))
+            value = self.value + other.value_rescaled_to(scale)
         else:
             scale = other.rate
-            value = (self.value_rescaled_to(scale) - other.value)
+            value = self.value_rescaled_to(scale) + other.value
+
+        return RationalTime(value, scale)
+
+    # because RationalTime is immutable, += is sugar around +
+    __iadd__ = __add__
+
+    def __sub__(self, other):
+        """Returns a RationalTime object that is self - other.
+
+        If self and other have differing time rates, the result will have the
+        have the rate of the faster time.
+        """
+
+        try:
+            if self.rate == other.rate:
+                return RationalTime(self.value - other.value, self.rate)
+        except AttributeError:
+            if not isinstance(other, RationalTime):
+                raise TypeError(
+                    "RationalTime may only be added to other objects of type "
+                    "RationalTime, not {}.".format(type(other))
+                )
+            raise
+
+        if self.rate > other.rate:
+            scale = self.rate
+            value = self.value - other.value_rescaled_to(scale)
+        else:
+            scale = other.rate
+            value = self.value_rescaled_to(scale) - other.value
+
         return RationalTime(value=value, rate=scale)
 
     def _comparable_floats(self, other):
@@ -139,15 +186,18 @@ class RationalTime(object):
 
         If other is not of a type that can be compared, TypeError is raised
         """
-        if not isinstance(other, RationalTime):
-            raise TypeError(
-                "RationalTime can only be compared to other objects of type "
-                "RationalTime, not {}".format(type(other))
+        try:
+            return (
+                float(self.value) / self.rate,
+                float(other.value) / other.rate
             )
-        return (
-            float(self.value) / self.rate,
-            float(other.value) / other.rate
-        )
+        except AttributeError:
+            if not isinstance(other, RationalTime):
+                raise TypeError(
+                    "RationalTime can only be compared to other objects of type "
+                    "RationalTime, not {}".format(type(other))
+                )
+            raise
 
     def __gt__(self, other):
         f_self, f_other = self._comparable_floats(other)
@@ -197,9 +247,9 @@ class TimeTransform(object):
     """1D Transform for RationalTime.  Has offset and scale."""
 
     def __init__(self, offset=RationalTime(), scale=1.0, rate=None):
-        self.offset = offset
-        self.scale = scale
-        self.rate = rate
+        self.offset = copy.copy(offset)
+        self.scale = float(scale)
+        self.rate = float(rate) if rate else None
 
     def applied_to(self, other):
         if isinstance(other, TimeRange):
@@ -216,9 +266,8 @@ class TimeTransform(object):
                 rate=target_rate
             )
         elif isinstance(other, RationalTime):
-            result = RationalTime(0, other.rate)
-            result.value = other.value * self.scale
-            result = result + self.offset
+            value = other.value * self.scale
+            result = RationalTime(value, other.rate) + self.offset
             if target_rate is not None:
                 result = result.rescaled_to(target_rate)
 
@@ -278,22 +327,52 @@ class TimeRange(object):
     start_time of the TimeRange.
     """
 
-    def __init__(self, start_time=RationalTime(), duration=RationalTime()):
-        self.start_time = start_time
-        self.duration = duration
+    __slots__ = ['start_time', 'duration']
 
-    @property
-    def duration(self):
-        return self._duration
-
-    @duration.setter
-    def duration(self, val):
-        if not isinstance(val, RationalTime) or val.value < 0.0:
+    def __init__(self, start_time=None, duration=None):
+        if not isinstance(start_time, RationalTime) and start_time is not None:
+            raise TypeError(
+                "start_time must be a RationalTime, not "
+                "'{}'".format(start_time)
+            )
+        if (
+                duration is not None and (
+                    not isinstance(duration, RationalTime)
+                    or duration.value < 0.0
+                )
+        ):
             raise TypeError(
                 "duration must be a RationalTime with value >= 0, not "
-                "'{}'".format(val)
+                "'{}'".format(duration)
             )
-        self._duration = val
+
+        # if the start time has not been passed in
+        if not start_time:
+            if duration:
+                # ...get the rate from the duration
+                start_time = RationalTime(rate=duration.rate)
+            else:
+                # otherwise use the default
+                start_time = RationalTime()
+        _fn_cache(self, "start_time", copy.copy(start_time))
+
+        if not duration:
+            # ...get the rate from the start_time
+            duration = RationalTime(rate=start_time.rate)
+        _fn_cache(self, "duration", copy.copy(duration))
+
+    def __setattr__(self, key, val):
+        raise AttributeError("TimeRange is Immutable.")
+
+    def __copy__(self, memodict=None):
+        # Construct a new one directly to avoid the overhead of deepcopy
+        return TimeRange(
+            copy.copy(self.start_time),
+            copy.copy(self.duration)
+        )
+
+    # Always deepcopy, since we want this class to behave like a value type
+    __deepcopy__ = __copy__
 
     def end_time_inclusive(self):
         """The time of the last sample that contains data in the TimeRange.
@@ -308,22 +387,23 @@ class TimeRange(object):
         """
 
         if (
-            self.end_time_exclusive()
-            - self.start_time.rescaled_to(self.duration)
+            self.end_time_exclusive() - self.start_time.rescaled_to(self.duration)
         ).value > 1:
 
             result = (
-                self.end_time_exclusive() - RationalTime(1, self.duration.rate)
+                self.end_time_exclusive() - RationalTime(1, self.start_time.rate)
             )
 
             # if the duration's value has a fractional component
             if self.duration.value != math.floor(self.duration.value):
-                result = self.end_time_exclusive()
-                result.value = math.floor(result.value)
+                result = RationalTime(
+                    math.floor(self.end_time_exclusive().value),
+                    result.rate
+                )
 
             return result
         else:
-            return self.start_time
+            return copy.deepcopy(self.start_time)
 
     def end_time_exclusive(self):
         """"Time of the first sample outside the time range.
@@ -340,24 +420,20 @@ class TimeRange(object):
     def extended_by(self, other):
         """Construct a new TimeRange that is this one extended by another."""
 
-        result = TimeRange(self.start_time, self.duration)
-        if isinstance(other, TimeRange):
-            result.start_time = min(self.start_time, other.start_time)
-            new_end_time = max(
-                self.end_time_exclusive(),
-                other.end_time_exclusive()
-            )
-            result.duration = duration_from_start_end_time(
-                self.start_time,
-                new_end_time
-            )
-        else:
+        if not isinstance(other, TimeRange):
             raise TypeError(
                 "extended_by requires rtime be a TimeRange, not a '{}'".format(
                     type(other)
                 )
             )
-        return result
+
+        start_time = min(self.start_time, other.start_time)
+        new_end_time = max(
+            self.end_time_exclusive(),
+            other.end_time_exclusive()
+        )
+        duration = duration_from_start_end_time(start_time, new_end_time)
+        return TimeRange(start_time, duration)
 
     # @TODO: remove?
     def clamped(
@@ -366,32 +442,27 @@ class TimeRange(object):
         start_bound=BoundStrategy.Free,
         end_bound=BoundStrategy.Free
     ):
-        """Apply the range to either a RationalTime or a TimeRange.  If
-        applied to a TimeRange, the resulting TimeRange will have the same
-        boundary policy as other. (in other words, _not_ the same as self).
+        """Clamp 'other' (either a RationalTime or a TimeRange), according to
+        self.start_time/end_time_exclusive and the bound arguments.
         """
 
         if isinstance(other, RationalTime):
-            test_point = other
             if start_bound == BoundStrategy.Clamp:
-                test_point = max(other, self.start_time)
+                other = max(other, self.start_time)
             if end_bound == BoundStrategy.Clamp:
                 # @TODO: this should probably be the end_time_inclusive,
                 # not exclusive
-                test_point = min(test_point, self.end_time_exclusive())
-            return test_point
+                other = min(other, self.end_time_exclusive())
+            return other
         elif isinstance(other, TimeRange):
-            test_range = other
-            end = test_range.end_time_exclusive()
+            start_time = other.start_time
+            end = other.end_time_exclusive()
             if start_bound == BoundStrategy.Clamp:
-                test_range.start_time = max(other.start_time, self.start_time)
+                start_time = max(other.start_time, self.start_time)
             if end_bound == BoundStrategy.Clamp:
-                end = min(
-                    test_range.end_time_exclusive(),
-                    self.end_time_exclusive()
-                )
-                test_range.duration = end - test_range.start_time
-            return test_range
+                end = min(self.end_time_exclusive(), end)
+            duration = duration_from_start_end_time(start_time, end)
+            return TimeRange(start_time, duration)
         else:
             raise TypeError(
                 "TimeRange can only be applied to RationalTime objects, not "
@@ -407,9 +478,7 @@ class TimeRange(object):
 
         if isinstance(other, RationalTime):
             return (
-                self.start_time <= other
-                and other < self.end_time_exclusive()
-            )
+                self.start_time <= other and other < self.end_time_exclusive())
         elif isinstance(other, TimeRange):
             return (
                 self.start_time <= other.start_time and
@@ -474,28 +543,41 @@ class TimeRange(object):
 
 def from_frames(frame, fps):
     """Turn a frame number and fps into a time object.
+    :param frame: (:class:`int`) Frame number.
+    :param fps: (:class:`float`) Frame-rate for the (:class:`RationalTime`) instance.
 
-    For any integer fps value, the rate will be the fps.
-    For any common non-integer fps value (e.g. 29.97, 23.98) the time scale
-    will be 600.
+    :return: (:class:`RationalTime`) Instance for the frame and fps provided.
     """
 
-    if int(fps) == fps:
-        return RationalTime(frame, int(fps))
-    elif int(fps * 600) == fps * 600:
-        return RationalTime(frame * 600 / fps, 600)
-    raise ValueError(
-        "Non-standard frames per second ({}) not supported.".format(fps)
-    )
+    return RationalTime(int(frame), fps)
 
 
 def to_frames(time_obj, fps=None):
     """Turn a RationalTime into a frame number."""
 
     if not fps or time_obj.rate == fps:
-        return time_obj.value
+        return int(time_obj.value)
 
     return int(time_obj.value_rescaled_to(fps))
+
+
+def validate_timecode_rate(rate):
+    """Check if rate is of valid type and value.
+    Raises (:class:`TypeError` for wrong type of rate.
+    Raises (:class:`VaueError`) for invalid rate value.
+
+    :param rate: (:class:`int`) or (:class:`float`) The frame rate in question
+    """
+    if not isinstance(rate, (int, float)):
+        raise TypeError(
+            "rate must be <float> or <int> not {t}".format(t=type(rate)))
+
+    if rate not in VALID_TIMECODE_RATES:
+        raise ValueError(
+            '{rate} is not a valid frame rate, '
+            'Please use one of these: {valid}'.format(
+                rate=rate,
+                valid=VALID_TIMECODE_RATES))
 
 
 def from_timecode(timecode_str, rate):
@@ -507,64 +589,193 @@ def from_timecode(timecode_str, rate):
 
     :return: (:class:`RationalTime`) Instance for the timecode provided.
     """
+    # Validate rate
+    validate_timecode_rate(rate)
 
+    # Check if rate is drop frame
+    rate_is_dropframe = rate in VALID_DROPFRAME_TIMECODE_RATES
+
+    # Check if timecode indicates drop frame
     if ';' in timecode_str:
-        raise ValueError('Drop-Frame timecodes not supported.')
+        if not rate_is_dropframe:
+            raise ValueError(
+                'Timecode "{}" indicates drop-frame rate '
+                'due to the ";" frame divider. '
+                'Passed rate ({}) is of non-drop-frame rate. '
+                'Valid drop-frame rates are: {}'.format(
+                    timecode_str,
+                    rate,
+                    VALID_DROPFRAME_TIMECODE_RATES))
+        else:
+            timecode_str = timecode_str.replace(';', ':')
 
     hours, minutes, seconds, frames = timecode_str.split(":")
 
-    if int(frames) >= rate:
-        raise ValueError(
-            'Timecode "{}" has frames beyond rate ({}).'.format(
-                timecode_str, rate))
-
     # Timecode is declared in terms of nominal fps
-    nominal_fps = math.ceil(rate)
+    nominal_fps = int(math.ceil(rate))
+
+    if int(frames) >= nominal_fps:
+        raise ValueError(
+            'Frame rate mismatch. Timecode "{}" has frames beyond {}.'.format(
+                timecode_str, nominal_fps - 1))
+
+    dropframes = 0
+    if rate_is_dropframe:
+        if rate == 29.97:
+            dropframes = 2
+
+        elif rate == 59.94:
+            dropframes = 4
+
+    # To use for drop frame compensation
+    total_minutes = int(hours) * 60 + int(minutes)
+
+    # convert to frames
     value = (
-        (
-            # convert to frames
-            ((int(hours) * 60 + int(minutes)) * 60) + int(seconds)
-        ) * nominal_fps + int(frames)
-    )
+        ((total_minutes * 60) + int(seconds)) * nominal_fps + int(frames)) - \
+        (dropframes * (total_minutes - (total_minutes // 10)))
 
-    return RationalTime(value, nominal_fps)
+    return RationalTime(value, rate)
 
 
-def to_timecode(time_obj, rate):
+def to_timecode(time_obj, rate=None):
     """Convert a RationalTime into a timecode string.
 
     :param time_obj: (:class:`RationalTime`) instance to express as timecode.
     :param rate: (:class:`float`) The frame-rate to calculate timecode in
-        terms of.
+        terms of. (Default time_obj.rate)
 
     :return: (:class:`str`) The timecode.
     """
-
     if time_obj is None:
         return None
 
-    # First, we correct the time unit total as if the content were playing
-    # back at "nominal" fps
-    nominal_fps = math.ceil(rate)
-    time_units_per_second = time_obj.rate
-    time_units_per_frame = time_units_per_second / nominal_fps
-    time_units_per_minute = time_units_per_second * 60
+    rate = rate or time_obj.rate
+
+    # Validate rate
+    validate_timecode_rate(rate)
+
+    # Check if rate is drop frame
+    rate_is_dropframe = rate in VALID_DROPFRAME_TIMECODE_RATES
+
+    if not rate_is_dropframe:
+        # Check for variantions of ~24 fps and convert to 24 for calculations
+        if round(rate) == 24:
+            rate = round(rate)
+
+    dropframes = 0
+    if rate_is_dropframe:
+        if rate == 29.97:
+            dropframes = 2
+
+        elif rate == 59.94:
+            dropframes = 4
+
+    # Number of frames in an hour
+    frames_per_hour = int(round(rate * 60 * 60))
+    # Number of frames in a day - timecode rolls over after 24 hours
+    frames_per_24_hours = frames_per_hour * 24
+    # Number of frames per ten minutes
+    frames_per_10_minutes = int(round(rate * 60 * 10))
+    # Number of frames per minute is the round of the framerate * 60 minus
+    # the number of dropped frames
+    frames_per_minute = int(round(rate) * 60) - dropframes
+
+    value = time_obj.value
+
+    if value < 0:
+        raise ValueError(
+            "Negative values are not supported for converting to timecode.")
+
+    # If frame_number is greater than 24 hrs, next operation will rollover
+    # clock
+    value %= frames_per_24_hours
+
+    if rate_is_dropframe:
+        d = value // frames_per_10_minutes
+        m = value % frames_per_10_minutes
+        if m > dropframes:
+            value += (dropframes * 9 * d) + \
+                dropframes * ((m - dropframes) // frames_per_minute)
+        else:
+            value += dropframes * 9 * d
+
+    nominal_fps = int(math.ceil(rate))
+
+    frames = value % nominal_fps
+    seconds = (value // nominal_fps) % 60
+    minutes = ((value // nominal_fps) // 60) % 60
+    hours = (((value // nominal_fps) // 60) // 60)
+
+    tc = "{HH:02d}:{MM:02d}:{SS:02d}{div}{FF:02d}"
+
+    return tc.format(
+        HH=int(hours),
+        MM=int(minutes),
+        SS=int(seconds),
+        div=rate_is_dropframe and ";" or ":",
+        FF=int(frames))
+
+
+def from_time_string(time_str, rate):
+    """Convert a time with microseconds string into a RationalTime.
+
+    :param time_str: (:class:`str`) A HH:MM:ss.ms time.
+    :param rate: (:class:`float`) The frame-rate to calculate timecode in
+        terms of.
+
+    :return: (:class:`RationalTime`) Instance for the timecode provided.
+    """
+
+    if ';' in time_str:
+        raise ValueError('Drop-Frame timecodes not supported.')
+
+    hours, minutes, seconds = time_str.split(":")
+    microseconds = "0"
+    if '.' in seconds:
+        seconds, microseconds = str(seconds).split('.')
+    microseconds = microseconds[0:6]
+    seconds = '.'.join([seconds, microseconds])
+    time_obj = from_seconds(
+        float(seconds) +
+        (int(minutes) * 60) +
+        (int(hours) * 60 * 60)
+    )
+    return time_obj.rescaled_to(rate)
+
+
+def to_time_string(time_obj):
+    """
+    Convert this timecode to time with microsecond, as formated in FFMPEG
+
+    :return: Number formated string of time
+    """
+    if time_obj is None:
+        return None
+    # convert time object to seconds
+    seconds = to_seconds(time_obj)
+
+    # reformat in time string
+    time_units_per_minute = 60
     time_units_per_hour = time_units_per_minute * 60
     time_units_per_day = time_units_per_hour * 24
 
-    days, hour_units = divmod(time_obj.value, time_units_per_day)
+    days, hour_units = divmod(seconds, time_units_per_day)
     hours, minute_units = divmod(hour_units, time_units_per_hour)
-    minutes, second_units = divmod(minute_units, time_units_per_minute)
-    seconds, frame_units = divmod(second_units, time_units_per_second)
-    frames, _ = divmod(frame_units, time_units_per_frame)
+    minutes, seconds = divmod(minute_units, time_units_per_minute)
+    microseconds = "0"
+    seconds = str(seconds)
+    if '.' in seconds:
+        seconds, microseconds = str(seconds).split('.')
 
     # TODO: There are some rollover policy issues for days and hours,
     #       We need to research these
 
-    channels = (hours, minutes, seconds, frames)
-
-    return ":".join(
-        ["{n:0{width}d}".format(n=int(n), width=2) for n in channels]
+    return "{hours}:{minutes}:{seconds}.{microseconds}".format(
+        hours="{n:0{width}d}".format(n=int(hours), width=2),
+        minutes="{n:0{width}d}".format(n=int(minutes), width=2),
+        seconds="{n:0{width}d}".format(n=int(seconds), width=2),
+        microseconds=microseconds[0:6]
     )
 
 
